@@ -1,0 +1,21 @@
+# Obsidian
+.obsidian/
+.DS_Store
+
+# Environment and secrets
+*.env
+.env
+.env.*
+*secret*
+*token*
+*.pem
+*.key
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~
+
+# System
+Thumbs.db
