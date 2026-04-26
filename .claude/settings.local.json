@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:www.google.com)"
+    ]
+  }
+}
