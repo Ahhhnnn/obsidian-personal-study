@@ -261,7 +261,82 @@ def load_hook_registry(settings, plugins=None) -> HookRegistry:
 
 ### Hot Reload
 
-`hot_reload.py:11-31` 的 `HookReloader` 监听 settings 文件的 mtime 变化，修改后自动重新加载 hook registry，无需重启 harness。
+`hot_reload.py:11-31` 的 `HookReloader` 实现了修改 settings.json 后**无需重启**即可热更新 hook 定义。
+
+#### 设计思路
+
+**不是后台线程轮询**，而是**被动触发式** — 每次 `current_registry()` 被调用时检查文件 mtime 是否变化：
+
+```python
+class HookReloader:
+    def __init__(self, settings_path: Path) -> None:
+        self._settings_path = settings_path
+        self._last_mtime_ns = -1      # 初始值：未知
+        self._registry = HookRegistry()
+
+    def current_registry(self) -> HookRegistry:
+        """Return the latest registry, reloading if needed."""
+        try:
+            stat = self._settings_path.stat()
+        except FileNotFoundError:           # 文件被删了 → 清空 registry
+            self._registry = HookRegistry()
+            self._last_mtime_ns = -1
+            return self._registry
+
+        if stat.st_mtime_ns != self._last_mtime_ns:   # 纳秒级精度检测
+            self._last_mtime_ns = stat.st_mtime_ns
+            self._registry = load_hook_registry(load_settings(self._settings_path))
+        return self._registry
+```
+
+#### 三个关键实现细节
+
+1. **`st_mtime_ns` vs `st_mtime`**：用纳秒级精度（`st_mtime_ns`）而非秒级（`st_mtime`），确保在快速修改场景下不会漏检
+
+2. **懒加载**：不立即加载，首次调用 `current_registry()` 时才做第一次检测和加载
+
+3. **文件不存在安全处理**：如果 settings 文件被删除，清空 registry 并重置状态
+
+#### 集成方式
+
+`runtime.py:242-244`：
+
+```python
+hook_reloader = HookReloader(get_config_file_path())
+hook_executor = HookExecutor(
+    hook_reloader.current_registry() if api_client is None else load_hook_registry(settings, plugins),
+    ...
+)
+```
+
+**仅在 TUI 模式**（`api_client is None`）使用 `HookReloader`；CLI 模式使用一次性加载的 registry，不热更新。
+
+#### 使用场景
+
+```
+用户启动 oh（进入 TUI）
+        │
+        ▼
+HookReloader(get_config_file_path())
+        │
+        ▼
+TUI 运行中，用户修改 settings.json 添加新 hook
+        │
+        ▼
+下次调用 hook_executor.execute() → current_registry()
+        │
+        ├── mtime 变化？→ 重新 load_hook_registry()
+        └── 无变化？→ 返回缓存的 registry
+```
+
+#### 为什么不用 watchdog 文件系统事件？
+
+因为它**足够简单且零依赖**：
+
+- 不需要额外引入 watchdog 库
+- 不需要管理后台线程生命周期
+- TUI 是单用户场景，低频检查（每次 `execute()` 前）完全够用
+- 纳秒级 mtime 检测比秒级更可靠
 
 ---
 
