@@ -19,3 +19,5 @@
 
 # System
 Thumbs.db
+# 抽象画大图（>10MB，不纳入版本库）
+*.png
